@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html
+  xmlns:th="http://www.thymeleaf.org"
+  xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+  lang="pt-BR"
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gestão de Permissões</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      .permission-matrix {
+        max-height: 600px;
+        overflow-y: auto;
+      }
+      .permission-row {
+        border-bottom: 1px solid #dee2e6;
+      }
+      .permission-header {
+        background-color: #f8f9fa;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      .toggle-cell {
+        text-align: center;
+        padding: 12px !important;
+      }
+      .card-name {
+        font-weight: 500;
+        min-width: 200px;
+      }
+
+      /* Toast container styles */
+      #toastContainer {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        min-width: 300px;
+        max-width: 500px;
+      }
+
+      .toast-notification {
+        margin-bottom: 10px;
+        animation: slideIn 0.3s ease-out;
+      }
+
+      @keyframes slideIn {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+
+      @keyframes slideOut {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+      }
+
+      .toast-notification.removing {
+        animation: slideOut 0.3s ease-in forwards;
+      }
+    </style>
+  </head>
+  <body>
+    <header th:insert="~{fragments/header :: header}"></header>
+
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+
+    <main class="container-fluid my-4" sec:authorize="hasRole('ADMIN')">
+      <div class="d-flex justify-content-between mb-4 align-items-center">
+        <h3>Matriz de Permissões</h3>
+        <a href="/admin/users" class="btn btn-outline-secondary"
+          >Voltar para Usuários</a
+        >
+      </div>
+
+      <div class="row">
+        <div class="col-md-3">
+          <div class="card rounded-0">
+            <div class="card-header bg-dark text-white rounded-0">
+              <h6 class="mb-0">Selecionar Usuário</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="list-group list-group-flush" id="userList">
+                <button
+                  type="button"
+                  class="list-group-item list-group-item-action"
+                  th:each="user : ${users}"
+                  th:data-user-id="${user.id}"
+                  th:text="${user.username}"
+                ></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-9">
+          <div class="card rounded-0">
+            <div class="card-header bg-dark text-white rounded-0">
+              <h6 class="mb-0">Permissões por Card</h6>
+            </div>
+            <div class="card-body">
+              <div id="noUserSelected" class="alert alert-info">
+                Selecione um usuário para visualizar e editar permissões.
+              </div>
+
+              <div id="permissionsContent" style="display: none">
+                <div class="permission-matrix">
+                  <table class="table table-sm mb-0">
+                    <thead class="permission-header">
+                      <tr>
+                        <th class="card-name">Card</th>
+                        <th class="toggle-cell">Visualizar</th>
+                        <th class="toggle-cell">Criar</th>
+                        <th class="toggle-cell">Editar</th>
+                        <th class="toggle-cell">Deletar</th>
+                        <th class="toggle-cell" style="width: 100px">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody id="permissionsTableBody"></tbody>
+                  </table>
+                </div>
+
+                <div class="mt-3">
+                  <button
+                    class="btn btn-success"
+                    id="btnSaveChanges"
+                    style="display: none"
+                  >
+                    Salvar Alterações
+                  </button>
+                  <small class="text-muted d-block mt-2">
+                    Alterações são salvas automaticamente ao selecionar.
+                  </small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+      window.__cards = /*[[${cards}]]*/ [];
+    </script>
+    <script>
+      const state = {
+        selectedUserId: null,
+        cards: [],
+        permissions: new Map(),
+        changes: new Map(),
+        cardMatrices: new Map(),
+      };
+
+      const elements = {
+        userList: document.getElementById("userList"),
+        noUserSelected: document.getElementById("noUserSelected"),
+        permissionsContent: document.getElementById("permissionsContent"),
+        permissionsTableBody: document.getElementById("permissionsTableBody"),
+        btnSaveChanges: document.getElementById("btnSaveChanges"),
+        toastContainer: document.getElementById("toastContainer"),
+      };
+
+      // Move showToast to top level
+      function showToast(message, type = "info") {
+        const toast = document.createElement("div");
+        toast.className = `alert alert-${type} alert-dismissible fade show toast-notification`;
+        toast.role = "alert";
+        toast.innerHTML = `
+          ${message}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+
+        elements.toastContainer.appendChild(toast);
+
+        setTimeout(() => {
+          toast.classList.add("removing");
+          setTimeout(() => toast.remove(), 300);
+        }, 3000);
+
+        toast.querySelector(".btn-close").addEventListener("click", () => {
+          toast.classList.add("removing");
+          setTimeout(() => toast.remove(), 300);
+        });
+      }
+
+      (function initCardsFromModel() {
+        try {
+          const cards = Array.isArray(window.__cards) ? window.__cards : [];
+          state.cards = cards.map((c) => ({
+            id: c.id,
+            title: c.title,
+            description: c.description,
+          }));
+        } catch (_) {
+          state.cards = [];
+        }
+        renderUserList();
+      })();
+
+      function renderUserList() {
+        elements.userList.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", (e) =>
+            selectUser(btn.getAttribute("data-user-id"), btn.textContent, btn)
+          );
+        });
+      }
+
+      function selectUser(userId, username, btnEl) {
+        state.selectedUserId = userId;
+        document
+          .querySelectorAll("#userList button")
+          .forEach((b) => b.classList.remove("active"));
+        if (btnEl) {
+          btnEl.classList.add("active");
+        }
+
+        loadPermissions(userId);
+      }
+
+      function loadPermissions(userId) {
+        fetch(`/admin/permissions/user/${userId}`)
+          .then((r) => r.json())
+          .then((permissions) => {
+            state.permissions.clear();
+            permissions.forEach((p) => {
+              state.permissions.set(p.cardId, p);
+            });
+            renderPermissionsMatrix();
+          })
+          .catch((err) => {
+            console.error("Erro ao carregar permissões:", err);
+            renderPermissionsMatrix();
+          });
+      }
+
+      function renderPermissionsMatrix() {
+        elements.noUserSelected.style.display = "none";
+        elements.permissionsContent.style.display = "block";
+        elements.permissionsTableBody.innerHTML = "";
+
+        state.cards.forEach((card) => {
+          const perm = state.permissions.get(card.id);
+          const row = createPermissionRow(card, perm);
+          elements.permissionsTableBody.appendChild(row);
+
+          // Insert panel row after main row
+          const panelRow = document.createElement("tr");
+          panelRow.className = "permission-columns";
+          panelRow.setAttribute("data-card-id", card.id);
+          const panelTd = document.createElement("td");
+          panelTd.colSpan = 6;
+          panelTd.innerHTML = `
+            <div class="border rounded p-3" style="display:none" id="columns-panel-${card.id}">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Permissões por coluna</strong>
+                <small class="text-muted">Alterações salvam automaticamente.</small>
+              </div>
+              <div id="columns-content-${card.id}"></div>
+            </div>
+          `;
+          panelRow.appendChild(panelTd);
+          row.after(panelRow);
+        });
+      }
+
+      function createPermissionRow(card, permission) {
+        const row = document.createElement("tr");
+        row.className = "permission-row";
+        row.setAttribute("data-card-id", card.id);
+        row.setAttribute("data-user-id", state.selectedUserId);
+
+        const hasPerm = !!permission;
+        const permData = permission || {
+          canView: false,
+          canCreate: false,
+          canEdit: false,
+          canDelete: false,
+          columnOverrides: [],
+        };
+
+        row.innerHTML = `
+      <td class="card-name"><strong>${card.title}</strong></td>
+      <td class="toggle-cell">
+        <input type="checkbox" class="form-check-input perm-toggle" data-perm="canView" ${
+          permData.canView ? "checked" : ""
+        }>
+      </td>
+      <td class="toggle-cell">
+        <input type="checkbox" class="form-check-input perm-toggle" data-perm="canCreate" ${
+          permData.canCreate ? "checked" : ""
+        }>
+      </td>
+      <td class="toggle-cell">
+        <input type="checkbox" class="form-check-input perm-toggle" data-perm="canEdit" ${
+          permData.canEdit ? "checked" : ""
+        }>
+      </td>
+      <td class="toggle-cell">
+        <input type="checkbox" class="form-check-input perm-toggle" data-perm="canDelete" ${
+          permData.canDelete ? "checked" : ""
+        }>
+      </td>
+      <td class="toggle-cell">
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-primary btn-columns" ${
+            !hasPerm ? "disabled" : ""
+          }>Colunas</button>
+          <button class="btn btn-danger btn-remove-perm" ${
+            !hasPerm ? "disabled" : ""
+          }>Remover</button>
+        </div>
+      </td>
+    `;
+
+        row.querySelectorAll(".perm-toggle").forEach((checkbox) => {
+          checkbox.addEventListener("change", () => savePermission(card.id));
+        });
+
+        row.querySelector(".btn-remove-perm").addEventListener("click", () => {
+          removePermission(card.id);
+        });
+
+        row.querySelector(".btn-columns").addEventListener("click", () => {
+          toggleColumnsPanel(card.id);
+        });
+
+        return row;
+      }
+
+      async function toggleColumnsPanel(cardId) {
+        const panel = document.getElementById(`columns-panel-${cardId}`);
+        const content = document.getElementById(`columns-content-${cardId}`);
+        const userId = state.selectedUserId;
+
+        if (!panel) {
+          console.error(`Panel not found for card ${cardId}`);
+          return;
+        }
+
+        if (panel.style.display === "none") {
+          try {
+            const [columns, matrix] = await Promise.all([
+              fetch(`/admin/permissions/card/${cardId}/columns`).then((r) =>
+                r.json()
+              ),
+              fetch(`/admin/permissions/user/${userId}/card/${cardId}`).then(
+                (r) => r.json()
+              ),
+            ]);
+            state.cardMatrices.set(cardId, matrix);
+
+            const overrides = Array.isArray(matrix.columnOverrides)
+              ? matrix.columnOverrides
+              : [];
+            const overrideById = Object.fromEntries(
+              overrides.map((o) => [o.columnId, o])
+            );
+
+            const rowsHtml = columns
+              .map((col) => {
+                const ov = overrideById[col.id] || {
+                  canView: true,
+                  canEdit: true,
+                };
+                return `
+                  <div class="row align-items-center py-1 border-bottom" data-column-id="${
+                    col.id
+                  }">
+                    <div class="col-6"><span class="badge bg-dark me-2">${
+                      col.key
+                    }</span>${col.label}</div>
+                    <div class="col-3 text-center">
+                      <input type="checkbox" class="form-check-input column-toggle" data-ov="canView" ${
+                        ov.canView ? "checked" : ""
+                      }>
+                    </div>
+                    <div class="col-3 text-center">
+                      <input type="checkbox" class="form-check-input column-toggle" data-ov="canEdit" ${
+                        ov.canEdit ? "checked" : ""
+                      }>
+                    </div>
+                  </div>
+                `;
+              })
+              .join("");
+
+            content.innerHTML = `
+              <div class="row fw-bold permission-header mb-2">
+                <div class="col-6">Coluna</div>
+                <div class="col-3 text-center">Visualizar</div>
+                <div class="col-3 text-center">Editar</div>
+              </div>
+              ${rowsHtml || '<div class="text-muted">Sem colunas</div>'}
+            `;
+
+            content.querySelectorAll(".column-toggle").forEach((cb) => {
+              cb.addEventListener("change", () => saveColumns(cardId));
+            });
+
+            panel.style.display = "";
+          } catch (err) {
+            console.error("Erro ao carregar colunas:", err);
+            showToast("Erro ao carregar colunas", "danger");
+          }
+        } else {
+          panel.style.display = "none";
+        }
+      }
+
+      function savePermission(cardId) {
+        const userId = state.selectedUserId;
+        const row = document.querySelector(
+          `tr.permission-row[data-card-id="${cardId}"]`
+        );
+
+        if (!row) {
+          console.error(`Row not found for card ${cardId}`);
+          return;
+        }
+
+        const payload = {
+          userId: parseInt(userId, 10),
+          cardId: parseInt(cardId, 10),
+          canView: row.querySelector('[data-perm="canView"]').checked,
+          canCreate: row.querySelector('[data-perm="canCreate"]').checked,
+          canEdit: row.querySelector('[data-perm="canEdit"]').checked,
+          canDelete: row.querySelector('[data-perm="canDelete"]').checked,
+          columnOverrides: undefined,
+        };
+
+        const method = state.permissions.has(cardId) ? "PUT" : "POST";
+        const endpoint = `/admin/permissions/user/${userId}/card/${cardId}`;
+
+        fetch(endpoint, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then((r) => {
+            if (r.ok) {
+              loadPermissions(userId);
+              showToast("Permissão salva com sucesso", "success");
+            } else {
+              showToast("Erro ao salvar permissão", "danger");
+            }
+          })
+          .catch((err) => {
+            console.error("Erro:", err);
+            showToast("Erro de rede", "danger");
+          });
+      }
+
+      function saveColumns(cardId) {
+        const userId = state.selectedUserId;
+        const matrix = state.cardMatrices.get(cardId);
+        if (!matrix) return;
+
+        const row = document.querySelector(
+          `tr.permission-row[data-card-id="${cardId}"]`
+        );
+
+        if (!row) {
+          console.error(`Row not found for card ${cardId}`);
+          return;
+        }
+
+        const cardLevel = {
+          canView: row.querySelector('[data-perm="canView"]').checked,
+          canCreate: row.querySelector('[data-perm="canCreate"]').checked,
+          canEdit: row.querySelector('[data-perm="canEdit"]').checked,
+          canDelete: row.querySelector('[data-perm="canDelete"]').checked,
+        };
+
+        const overrides = [];
+        document
+          .querySelectorAll(`#columns-content-${cardId} [data-column-id]`)
+          .forEach((line) => {
+            const columnId = parseInt(line.getAttribute("data-column-id"), 10);
+            const canView = line.querySelector('[data-ov="canView"]').checked;
+            const canEdit = line.querySelector('[data-ov="canEdit"]').checked;
+
+            overrides.push({
+              columnId,
+              canView,
+              canEdit,
+            });
+          });
+
+        const payload = {
+          userId: parseInt(userId, 10),
+          cardId: parseInt(cardId, 10),
+          ...cardLevel,
+          columnOverrides: overrides,
+        };
+
+        fetch(`/admin/permissions/user/${userId}/card/${cardId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then((r) => {
+            if (r.ok) {
+              return fetch(
+                `/admin/permissions/user/${userId}/card/${cardId}`
+              ).then((rr) => rr.json());
+            }
+            throw new Error("save error");
+          })
+          .then((newMatrix) => {
+            state.cardMatrices.set(cardId, newMatrix);
+            showToast("Permissões de colunas salvas", "success");
+          })
+          .catch((err) => {
+            console.error(err);
+            showToast("Erro ao salvar colunas", "danger");
+          });
+      }
+
+      function removePermission(cardId) {
+        if (!confirm("Remover acesso deste usuário a este card?")) return;
+
+        const userId = state.selectedUserId;
+        fetch(`/admin/permissions/user/${userId}/card/${cardId}`, {
+          method: "DELETE",
+        })
+          .then((r) => {
+            if (r.ok) {
+              loadPermissions(userId);
+              showToast("Acesso removido", "success");
+            } else {
+              showToast("Erro ao remover permissão", "danger");
+            }
+          })
+          .catch((err) => {
+            console.error("Erro:", err);
+            showToast("Erro de rede", "danger");
+          });
+      }
+    </script>
+  </body>
+</html>

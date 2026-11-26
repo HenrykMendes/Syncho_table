@@ -1,0 +1,13 @@
+# Estágio 1: Build com Maven
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /app
+COPY pom.xml .
+RUN mvn dependency:go-offline
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# Estágio 2: Execução da aplicação
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+ENTRYPOINT ["sh", "-c", "java -Xmx256m -Dserver.port=${PORT:-80} -jar app.jar"]

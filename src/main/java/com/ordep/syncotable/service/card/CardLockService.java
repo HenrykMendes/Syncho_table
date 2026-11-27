@@ -92,7 +92,9 @@ public class CardLockService {
         return card.getLockedBy() != null && card.getLockedBy().getId().equals(userId);
     }
 
-    @Scheduled(fixedDelay = 300000)
+    // Limpeza do registro de locks expirados a cada 60 s (RN11, RNF08). A validade do lock
+    // NÃO depende deste job: isLockValid() já invalida o lock após 5 min sem renovação (RN09).
+    @Scheduled(fixedDelay = 60000)
     @Transactional
     public void cleanupOrphanLocks() {
         cards.findAll().stream()
